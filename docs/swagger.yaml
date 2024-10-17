@@ -1,0 +1,134 @@
+basePath: /
+definitions:
+  main.Medicine:
+    properties:
+      id:
+        type: integer
+      manufacturer:
+        type: string
+      name:
+        type: string
+      price:
+        type: number
+      stock:
+        type: integer
+    type: object
+host: localhost:8080
+info:
+  contact:
+    email: support@swagger.io
+    name: API Support
+    url: http://www.swagger.io/support
+  description: This Server API is a simulator pharmacy.
+  license:
+    name: Apache 2.0
+    url: http://www.apache.org/licenses/LICENSE-2.0.html
+  termsOfService: http://swagger.io/terms/
+  title: Pharmacy API
+  version: "1.0"
+paths:
+  /medicines:
+    get:
+      description: Get All Medicine's Data
+      operationId: get-medicines
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/main.Medicine'
+            type: array
+      summary: Get Medicine
+    post:
+      consumes:
+      - application/json
+      description: Create New Medicine Data
+      operationId: create-medicine
+      parameters:
+      - description: Medicine Data
+        in: body
+        name: medicine
+        required: true
+        schema:
+          $ref: '#/definitions/main.Medicine'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/main.Medicine'
+      summary: Create New Medicine
+  /medicines/{id}:
+    delete:
+      description: Delete Medicine By ID
+      operationId: delete-medicine
+      parameters:
+      - description: Medicine ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Medicine is not exist
+          schema:
+            type: string
+      summary: Delete Medicine
+    get:
+      description: Get Medicine Data By ID
+      operationId: get-medicine-by-id
+      parameters:
+      - description: Medicine ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.Medicine'
+        "404":
+          description: Medicine is not exist
+          schema:
+            type: string
+      summary: Get Medicine By ID
+    put:
+      consumes:
+      - application/json
+      description: Update Medicine By ID
+      operationId: update-medicine
+      parameters:
+      - description: Medicine ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Medicine Info
+        in: body
+        name: medicine
+        required: true
+        schema:
+          $ref: '#/definitions/main.Medicine'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.Medicine'
+        "404":
+          description: Medicine is not exist
+          schema:
+            type: string
+      summary: Update Medicine
+swagger: "2.0"
