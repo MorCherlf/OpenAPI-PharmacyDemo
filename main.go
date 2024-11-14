@@ -1,13 +1,19 @@
 package main
 
 import (
+	_ "Pharmacy/docs"
+	"fmt"
 	"net/http"
 	"strconv"
-	_"Pharmacy/docs"
+	"sync/atomic"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"     // swagger embed files
 	ginSwagger "github.com/swaggo/gin-swagger" // gin-swagger middleware
+
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 // @title Pharmacy API
@@ -22,10 +28,42 @@ import (
 // @license.name Apache 2.0
 // @license.url http://www.apache.org/licenses/LICENSE-2.0.html
 
+var requestCount int32 // Counting
+var db *gorm.DB        // 数据库连接
+
+// 初始化数据库连接和迁移
+func init() {
+	var err error
+	db, err = gorm.Open(sqlite.Open("metrics.db"), &gorm.Config{})
+	if err != nil {
+		panic("failed to connect database")
+	}
+
+	// 自动迁移创建 Metric 表
+	db.AutoMigrate(&EndpointMetric{})
+}
+
+// Metric 数据库模型，用于存储指标
+type EndpointMetric struct {
+	ID           uint      `gorm:"primaryKey"`
+	Endpoint     string    `json:"endpoint"`
+	Timestamp    time.Time `json:"timestamp"`
+	RequestCount int       `json:"request_count"`
+}
+
 // @host localhost:8080
 // @BasePath /
 func main() {
 	r := gin.Default()
+
+	// 中间件用于收集请求计数
+	r.Use(func(c *gin.Context) {
+		atomic.AddInt32(&requestCount, 1)
+		recordEndpointMetric(c.FullPath()) // 记录完整路径作为 Endpoint
+		c.Next()
+	})
+
+	r.GET("/metrics", getMetrics) // 添加获取指标的路由
 
 	r.GET("/medicines", getMedicines)
 	r.GET("/medicines/:id", getMedicineByID)
@@ -37,6 +75,28 @@ func main() {
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	r.Run(":8080")
+}
+
+// 获取请求计数指标
+func getMetrics(c *gin.Context) {
+	var metrics []EndpointMetric
+	db.Find(&metrics)
+	c.JSON(http.StatusOK, metrics)
+}
+
+// 将当前请求计数记录到数据库中
+func recordEndpointMetric(endpoint string) {
+	metric := EndpointMetric{
+		Endpoint:     endpoint,
+		Timestamp:    time.Now().UTC(),
+		RequestCount: 1,
+	}
+	result := db.Create(&metric)
+	if result.Error != nil {
+		fmt.Println("Failed to write metric to database:", result.Error)
+	} else {
+		fmt.Println("Metric written to database successfully")
+	}
 }
 
 // Medicine
