@@ -2,101 +2,36 @@ package main
 
 import (
 	_ "Pharmacy/docs"
-	"fmt"
+	_ "fmt"
 	"net/http"
 	"strconv"
 	"sync/atomic"
-	"time"
+	_ "time"
 
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"     // swagger embed files
 	ginSwagger "github.com/swaggo/gin-swagger" // gin-swagger middleware
 
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// @title Pharmacy API
-// @version 1.0
-// @description This Server API is a simulator pharmacy.
-// @termsOfService http://swagger.io/terms/
-
-// @contact.name API Support
-// @contact.url http://www.swagger.io/support
-// @contact.email support@swagger.io
-
-// @license.name Apache 2.0
-// @license.url http://www.apache.org/licenses/LICENSE-2.0.html
-
 var requestCount int32 // Counting
-var db *gorm.DB        // 数据库连接
 
-// 初始化数据库连接和迁移
+// 定义 Prometheus 指标
+var (
+	prometheusRequestCount = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "http_requests_total",
+			Help: "Total number of HTTP requests",
+		},
+		[]string{"endpoint", "method"},
+	)
+)
+
 func init() {
-	var err error
-	db, err = gorm.Open(sqlite.Open("metrics.db"), &gorm.Config{})
-	if err != nil {
-		panic("failed to connect database")
-	}
-
-	// 自动迁移创建 Metric 表
-	db.AutoMigrate(&EndpointMetric{})
-}
-
-// Metric 数据库模型，用于存储指标
-type EndpointMetric struct {
-	ID           uint      `gorm:"primaryKey"`
-	Endpoint     string    `json:"endpoint"`
-	Timestamp    time.Time `json:"timestamp"`
-	RequestCount int       `json:"request_count"`
-}
-
-// @host localhost:8080
-// @BasePath /
-func main() {
-	r := gin.Default()
-
-	// 中间件用于收集请求计数
-	r.Use(func(c *gin.Context) {
-		atomic.AddInt32(&requestCount, 1)
-		recordEndpointMetric(c.FullPath()) // 记录完整路径作为 Endpoint
-		c.Next()
-	})
-
-	r.GET("/metrics", getMetrics) // 添加获取指标的路由
-
-	r.GET("/medicines", getMedicines)
-	r.GET("/medicines/:id", getMedicineByID)
-	r.POST("/medicines", createMedicine)
-	r.PUT("/medicines/:id", updateMedicine)
-	r.DELETE("/medicines/:id", deleteMedicine)
-
-	// Use ginSwagger middleware
-	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
-
-	r.Run(":8080")
-}
-
-// 获取请求计数指标
-func getMetrics(c *gin.Context) {
-	var metrics []EndpointMetric
-	db.Find(&metrics)
-	c.JSON(http.StatusOK, metrics)
-}
-
-// 将当前请求计数记录到数据库中
-func recordEndpointMetric(endpoint string) {
-	metric := EndpointMetric{
-		Endpoint:     endpoint,
-		Timestamp:    time.Now().UTC(),
-		RequestCount: 1,
-	}
-	result := db.Create(&metric)
-	if result.Error != nil {
-		fmt.Println("Failed to write metric to database:", result.Error)
-	} else {
-		fmt.Println("Metric written to database successfully")
-	}
+	// 注册指标到 Prometheus 默认注册表
+	prometheus.MustRegister(prometheusRequestCount)
 }
 
 // Medicine
@@ -113,6 +48,37 @@ var medicines = []Medicine{
 	{ID: 1, Name: "ABC", Manufacturer: "1234", Price: 15.5, Stock: 100},
 	{ID: 2, Name: "EFG", Manufacturer: "5678", Price: 12.0, Stock: 50},
 	{ID: 3, Name: "XYZ", Manufacturer: "9999", Price: 5.8, Stock: 200},
+}
+
+// @host localhost:8080
+// @BasePath /
+func main() {
+	r := gin.Default()
+
+	// 中间件用于收集请求计数
+	r.Use(func(c *gin.Context) {
+		atomic.AddInt32(&requestCount, 1)
+		recordPrometheusMetric(c.FullPath(), c.Request.Method) // 记录 Prometheus 指标
+		c.Next()
+	})
+
+	r.GET("/metrics", gin.WrapH(promhttp.Handler())) // Prometheus 指标路由
+
+	r.GET("/medicines", getMedicines)
+	r.GET("/medicines/:id", getMedicineByID)
+	r.POST("/medicines", createMedicine)
+	r.PUT("/medicines/:id", updateMedicine)
+	r.DELETE("/medicines/:id", deleteMedicine)
+
+	// Use ginSwagger middleware
+	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+
+	r.Run(":8080")
+}
+
+// 记录 Prometheus 指标
+func recordPrometheusMetric(endpoint, method string) {
+	prometheusRequestCount.WithLabelValues(endpoint, method).Inc()
 }
 
 // @Summary Get Medicine
