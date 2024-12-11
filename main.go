@@ -3,6 +3,8 @@ package main
 import (
 	_ "Pharmacy/docs"
 	_ "fmt"
+	"log"
+	"os"
 	"net/http"
 	"strconv"
 	"sync/atomic"
@@ -29,6 +31,14 @@ var (
 	)
 )
 
+func initLogFile() *os.File {
+	logFile, err := os.OpenFile("gin_logs.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+	if err != nil {
+		log.Fatalf("Failed to open log file: %v", err)
+	}
+	return logFile
+}
+
 func init() {
 	// 注册指标到 Prometheus 默认注册表
 	prometheus.MustRegister(prometheusRequestCount)
@@ -53,6 +63,14 @@ var medicines = []Medicine{
 // @host localhost:8080
 // @BasePath /
 func main() {
+	// 创建日志文件
+	logFile := initLogFile()
+	defer logFile.Close()
+
+	// 配置 Gin 日志输出到文件
+	gin.DefaultWriter = logFile
+	gin.DefaultErrorWriter = logFile
+	
 	r := gin.Default()
 
 	// 中间件用于收集请求计数

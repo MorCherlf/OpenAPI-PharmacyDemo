@@ -1,0 +1,10 @@
+filebeat.inputs:
+- type: log
+  enabled: true
+  paths:
+    - /gin_logs.log
+  fields:
+    log_type: gin_logs
+
+output.elasticsearch:
+  hosts: ["http://localhost:9200"]
