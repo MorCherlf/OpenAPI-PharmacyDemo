@@ -21,10 +21,6 @@
 .idea/
 *.iml
 
-# Go 模块缓存
-go.sum
-go.work.sum
-
 # 日志文件
 *.log
 gin_logs.log
