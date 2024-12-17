@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"sync/atomic"
 	_ "time"
+	"context"
 
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"     // swagger embed files
@@ -16,6 +17,15 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+    "go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
+    "go.opentelemetry.io/otel"
+    "go.opentelemetry.io/otel/attribute"
+    "go.opentelemetry.io/otel/exporters/otlp/otlptrace"
+    "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+    "go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+    "go.opentelemetry.io/otel/trace"
 )
 
 var requestCount int32 // Counting
@@ -42,7 +52,35 @@ func initLogFile() *os.File {
 func init() {
 	// 注册指标到 Prometheus 默认注册表
 	prometheus.MustRegister(prometheusRequestCount)
+	// 初始化追踪器
+	if err := initTracer(); err != nil {
+		log.Fatalf("Failed to initialize tracer: %v", err)
+	}
 }
+
+// 初始化 Jaeger 追踪器
+func initTracer() error {
+	ctx := context.Background()
+    client := otlptracehttp.NewClient(
+        otlptracehttp.WithEndpoint("localhost:4318"),
+        otlptracehttp.WithInsecure(),
+    )
+    exporter, err := otlptrace.New(ctx, client)
+    if err != nil {
+        return err
+    }
+    tp := sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(exporter),
+		sdktrace.WithResource(resource.NewSchemaless(
+			attribute.String("service.name", "pharmacy-service"),
+		)),
+	)
+
+	otel.SetTracerProvider(tp)
+	return nil
+}
+
+
 
 // Medicine
 type Medicine struct {
@@ -70,8 +108,11 @@ func main() {
 	// 配置 Gin 日志输出到文件
 	gin.DefaultWriter = logFile
 	gin.DefaultErrorWriter = logFile
-	
+
 	r := gin.Default()
+
+	// 使用 OpenTelemetry 中间件
+	r.Use(otelgin.Middleware("pharmacy-service"))
 
 	// 中间件用于收集请求计数
 	r.Use(func(c *gin.Context) {
@@ -92,6 +133,9 @@ func main() {
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	r.Run(":8080")
+	if err := r.Run(":8080"); err != nil {
+		log.Fatalf("Failed to start server: %v", err)
+	}
 }
 
 // 记录 Prometheus 指标
@@ -106,8 +150,15 @@ func recordPrometheusMetric(endpoint, method string) {
 // @Success 200 {array} Medicine
 // @Router /medicines [get]
 func getMedicines(c *gin.Context) {
-	c.JSON(http.StatusOK, medicines)
+    _, span := otel.Tracer("pharmacy-service").Start(c.Request.Context(), "getMedicines")
+    defer span.End()
+
+    c.JSON(http.StatusOK, medicines)
+    span.AddEvent("Fetched all medicines", trace.WithAttributes(
+        attribute.Int("medicine_count", len(medicines)),
+    ))
 }
+
 
 // @Summary Get Medicine By ID
 // @Description Get Medicine Data By ID
@@ -118,8 +169,13 @@ func getMedicines(c *gin.Context) {
 // @Failure 404 {object} string "Medicine is not exist"
 // @Router /medicines/{id} [get]
 func getMedicineByID(c *gin.Context) {
+	// 创建 span
+	_, span := otel.Tracer("pharmacy-service").Start(c.Request.Context(), "getMedicineByID")
+	defer span.End()
+
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
+		span.RecordError(err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Unavailable ID"})
 		return
 	}
@@ -127,10 +183,12 @@ func getMedicineByID(c *gin.Context) {
 	for _, m := range medicines {
 		if m.ID == id {
 			c.JSON(http.StatusOK, m)
+			span.SetAttributes(attribute.Int("medicine_id", id))
 			return
 		}
 	}
 
+	span.SetAttributes(attribute.Int("medicine_id", id))
 	c.JSON(http.StatusNotFound, gin.H{"error": "Medicine is not exist."})
 }
 
@@ -143,8 +201,13 @@ func getMedicineByID(c *gin.Context) {
 // @Success 201 {object} Medicine
 // @Router /medicines [post]
 func createMedicine(c *gin.Context) {
+	// 创建 span
+	_, span := otel.Tracer("pharmacy-service").Start(c.Request.Context(), "createMedicine")
+	defer span.End()
+
 	var newMedicine Medicine
 	if err := c.ShouldBindJSON(&newMedicine); err != nil {
+		span.RecordError(err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -152,6 +215,7 @@ func createMedicine(c *gin.Context) {
 	newMedicine.ID = len(medicines) + 1
 	medicines = append(medicines, newMedicine)
 	c.JSON(http.StatusCreated, newMedicine)
+	span.SetAttributes(attribute.Int("new_medicine_id", newMedicine.ID))
 }
 
 // @Summary Update Medicine
@@ -165,14 +229,20 @@ func createMedicine(c *gin.Context) {
 // @Failure 404 {object} string "Medicine is not exist"
 // @Router /medicines/{id} [put]
 func updateMedicine(c *gin.Context) {
+	// 创建 span
+	_, span := otel.Tracer("pharmacy-service").Start(c.Request.Context(), "updateMedicine")
+	defer span.End()
+
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
+		span.RecordError(err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Unavailable ID"})
 		return
 	}
 
 	var updatedMedicine Medicine
 	if err := c.ShouldBindJSON(&updatedMedicine); err != nil {
+		span.RecordError(err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -182,10 +252,12 @@ func updateMedicine(c *gin.Context) {
 			medicines[i] = updatedMedicine
 			medicines[i].ID = id
 			c.JSON(http.StatusOK, medicines[i])
+			span.SetAttributes(attribute.Int("updated_medicine_id", id))
 			return
 		}
 	}
 
+	span.SetAttributes(attribute.Int("medicine_id", id))
 	c.JSON(http.StatusNotFound, gin.H{"error": "Medicine is not exist"})
 }
 
@@ -198,8 +270,13 @@ func updateMedicine(c *gin.Context) {
 // @Failure 404 {object} string "Medicine is not exist"
 // @Router /medicines/{id} [delete]
 func deleteMedicine(c *gin.Context) {
+	// 创建 span
+	_, span := otel.Tracer("pharmacy-service").Start(c.Request.Context(), "deleteMedicine")
+	defer span.End()
+
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
+		span.RecordError(err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Unavailable ID"})
 		return
 	}
@@ -208,9 +285,11 @@ func deleteMedicine(c *gin.Context) {
 		if m.ID == id {
 			medicines = append(medicines[:i], medicines[i+1:]...)
 			c.JSON(http.StatusNoContent, gin.H{})
+			span.SetAttributes(attribute.Int("deleted_medicine_id", id))
 			return
 		}
 	}
 
+	span.SetAttributes(attribute.Int("medicine_id", id))
 	c.JSON(http.StatusNotFound, gin.H{"error": "Medicine is not exist"})
 }
