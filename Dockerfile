@@ -1,5 +1,5 @@
 # 构建阶段
-FROM golang:1.20 AS build
+FROM golang:1.23 AS build
 
 WORKDIR /app
 
