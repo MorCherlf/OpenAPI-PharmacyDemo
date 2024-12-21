@@ -8,9 +8,11 @@ RUN go mod tidy
 COPY . .
 RUN go build -o main .
 
-FROM alpine:latest
+# 使用 distroless 镜像
+FROM gcr.io/distroless/base-debian10
+
 WORKDIR /root/
 COPY --from=build /app/main .
 
 EXPOSE 8080
-CMD ["./main"]
+CMD ["/root/main"]
